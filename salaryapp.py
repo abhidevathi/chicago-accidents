@@ -10,8 +10,6 @@ st.set_page_config(
     page_icon="💰",
     layout="wide"
 )
-
-# Custom CSS
 st.markdown("""
     <style>
     .main {
@@ -23,7 +21,6 @@ st.markdown("""
         color: #1E88E5;
         text-align: center;
     }
-    </style>
 """, unsafe_allow_html=True)
 
 # Load and process data
@@ -65,7 +62,21 @@ with st.sidebar:
         options=sorted(data['full_part_time'].astype(str).unique()),
         default=data['full_part_time'].astype(str).unique()
     )
-    
+    # Add bin widgth options
+    bin_width_options = {
+        '1K': 1000,
+        '5K': 5000,
+        '10K': 10000,
+        '20K': 20000
+    }
+    bin_width_key = st.selectbox(
+        "Salary Range Width:",
+        options=list(bin_width_options.keys()),
+        index=2,
+        help="Adjust the width of salary ranges in the histogram"
+    )
+    bin_width = bin_width_options[bin_width_key]
+
     min_salary, max_salary = st.slider(
         "Annual Pay Range ($):", 
         int(data['annual_pay'].min()), 
@@ -97,25 +108,64 @@ dept_df['percentage'] = (dept_df['employee_count'] / len(filtered_data) * 100).r
 # Sort by employee count descending
 dept_df = dept_df.sort_values('employee_count', ascending=True)
 
+st.subheader("🎯 Key Metrics")
+metric1, metric2, metric3 = st.columns(3)
+with metric1:
+    st.metric("Average Salary", f"${filtered_data['annual_pay'].mean():,.0f}")
+with metric2:
+    st.metric("Total Employees", f"{len(filtered_data):,}")
+with metric3:
+    st.metric("Departments", f"{len(departments)}")
+
+
 # Dashboard layout
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🎯 Key Metrics")
-    metric1, metric2, metric3 = st.columns(3)
-    with metric1:
-        st.metric("Average Salary", f"${filtered_data['annual_pay'].mean():,.0f}")
-    with metric2:
-        st.metric("Total Employees", f"{len(filtered_data):,}")
-    with metric3:
-        st.metric("Departments", f"{len(departments)}")
 
-    st.subheader("📊 Salary Distribution")
-    fig_dist = px.histogram(filtered_data, x="annual_pay", 
-                            nbins=40, 
-                            title="Salary Distribution")
-    fig_dist.update_layout(xaxis_title="Annual Pay ($)", 
-                           yaxis_title="Count")
+    st.subheader("📊 Salary Distribution")    
+    # salary_range = filtered_data['annual_pay'].max() - filtered_data['annual_pay'].min()
+    
+    
+    min_value = bin_width * np.floor(filtered_data['annual_pay'].min() / bin_width)
+    max_value = bin_width * np.ceil(filtered_data['annual_pay'].max() / bin_width)
+    # st.write(f"Min value: {min_value}, Max value: {max_value}")
+    num_bins = int((max_value - min_value) / bin_width)
+    # st.write(f"Number of bins: {num_bins} (Width: ${bin_width})")
+    
+    bin_edges = np.linspace(
+        min_value,
+        max_value,
+        num_bins + 1
+    )
+
+    fig_dist = px.histogram(
+        filtered_data,
+        x="annual_pay", 
+        nbins=num_bins, 
+        title="Salary Distribution",
+        labels={'annual_pay': 'Annual Pay'},
+        barmode='relative',
+        opacity=0.8,
+        )
+    
+    bin_starts=bin_edges[:-1]
+    bin_ends=bin_edges[1:]
+
+    fig_dist.update_traces(
+        hovertemplate="<b>Salary Range:</b><br>" +
+        "$%{customdata[0]:,.0f} - $%{customdata[1]:,.0f}<br>" +
+        "Employee Count: %{y:,}<br>" +
+        "<extra></extra>",
+        customdata=np.column_stack((bin_starts, bin_ends))
+    )
+
+    fig_dist.update_layout(
+        xaxis_title="Annual Pay ($)", 
+        yaxis_title="Employee Count",
+        bargap=0.2,
+        )
+
     st.plotly_chart(fig_dist, use_container_width=True)
 
 with col2:
@@ -188,23 +238,76 @@ fig_dept_dist.update_layout(
 st.plotly_chart(fig_dept_dist, use_container_width=True)
 
 # Top earners
-st.subheader("🏆 Top 10 Highest-Paid Employees")
-top_10 = filtered_data.nlargest(10, 'annual_pay')
-fig_top10 = go.Figure(data=[
+st.subheader("🏆 Top Highest-Paid Employees")
+top_n_selector = st.number_input("Number of top employees to display (1-100):", 
+                                min_value=1, 
+                                max_value=100, 
+                                value=10,
+                                step=1,
+                                help="Enter a number between 1 and 100")
+top_n = filtered_data.nlargest(top_n_selector, 'annual_pay').sort_values('annual_pay', ascending=False)
+top_n['rank'] = range(1, len(top_n) + 1)
+# Create a custom table with better formatting
+fig_top_n = go.Figure(data=[
     go.Table(
-        header=dict(values=['Name', 'Job Title', 'Department', 'Annual Pay'],
-                   fill_color='#1E88E5',
-                   align='left',
-                   font=dict(color='white')),
-        cells=dict(values=[top_10['name'], 
-                          top_10['job_title'],
-                          top_10['department'],
-                          top_10['annual_pay'].apply(lambda x: f"${x:,.2f}")],
-                  align='left'))
+        header=dict(
+            values=['<b>Rank</b>', '<b>Name</b>', '<b>Job Title</b>', '<b>Department</b>', '<b>Annual Pay</b>'],
+            fill_color='#1E88E5',
+            align=['center', 'left', 'left', 'left', 'right'],
+            font=dict(color='white', size=14),
+            height=40,
+            line_color='#2b2b2b',
+            line_width=2,
+            
+        ),
+        cells=dict(
+            values=[
+                top_n['rank'].astype(str).values,
+                top_n['name'].values, 
+                top_n['job_title'].values,
+                top_n['department'].values,
+                top_n['annual_pay'].apply(lambda x: f"${x:,.2f}").values
+            ],
+            align=['center', 'left', 'left', 'left', 'right'],
+            font=dict(color='white',size=13),
+            height=24,
+            fill_color=[
+                ['#2b2b2b' if i%2 == 0 else '#3d3d3d' for i in range(len(top_n))]
+            ] * 5,
+            # columnwidth=[1,4,4,4,2],
+            line_color='#1E88E5',
+            line_width=1
+        ),
+        columnwidth=[1,4,4,4,2],
+    )
 ])
-st.plotly_chart(fig_top10, use_container_width=True)
 
-# Raw data with toggle
-if st.checkbox("Show Raw Data"):
-    st.dataframe(filtered_data.style.format({'annual_pay': '${:,.2f}'}))
+# Update layout for better visibility
+fig_top_n.update_layout(
+    margin=dict(l=20, r=20, t=20, b=20),
+    autosize=True,
+)
 
+# Create metrics for top earner stats
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric(
+        "Highest Salary", 
+        f"${top_n['annual_pay'].max():,.0f}",
+        f"Top {(top_n['annual_pay'].max() / filtered_data['annual_pay'].mean() - 1):,.1%} above average"
+    )
+with col2:
+    st.metric(
+        "Most Common Department", 
+        f"{top_n['department'].mode()[0]}",
+        f"{len(top_n[top_n['department'] == top_n['department'].mode()[0]])} employees"
+    )
+with col3:
+    st.metric(
+        f"Average Top {top_n_selector} Salary", 
+        f"${top_n['annual_pay'].mean():,.0f}",
+        f"${top_n['annual_pay'].mean() - filtered_data['annual_pay'].mean():,.0f} above average"
+    )
+
+# Create container with custom class
+st.plotly_chart(fig_top_n, use_container_width=True)
